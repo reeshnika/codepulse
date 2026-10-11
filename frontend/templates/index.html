@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodePulse - Developer Intelligence</title>
+    <link rel="stylesheet" href="/static/style.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -142,6 +143,8 @@
         .state.working { background: #fbbf2422; color: #fbbf24; border: 1px solid #fbbf2466; }
         .state.struggling { background: #ef444422; color: #ef4444; border: 1px solid #ef444466; }
         .state.blocked { background: #ef444466; color: #fff; border: 1px solid #ef4444; }
+        .state.idle { background: #94a3b822; color: #94a3b8; border: 1px solid #94a3b866; }
+        .state.not-code { background: #6b7280; color: #ffffff; border: 1px solid #9ca3af; }
         .components {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -226,6 +229,22 @@
         .footer a:hover {
             text-decoration: underline;
         }
+        .clear-btn {
+            background: rgba(255, 71, 87, 0.15);
+            border: 1px solid #ff4757;
+            color: #ff4757;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .clear-btn:hover {
+            background: #ff4757;
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(255, 71, 87, 0.4);
+        }
         @media (max-width: 768px) {
             .stats-grid { grid-template-columns: 1fr 1fr; }
             .header { flex-direction: column; text-align: center; gap: 10px; }
@@ -261,7 +280,7 @@
             <div class="stat-card">
                 <div class="label">📝 WPM</div>
                 <div class="value" id="wpm">45</div>
-                <div class="sub">Typing speed</div>
+                <div class="sub">Typing speed (active time)</div>
             </div>
             <div class="stat-card">
                 <div class="label">⏱️ Session</div>
@@ -314,9 +333,41 @@
             </div>
         </div>
 
+        <!-- Live Typing Playground -->
+        <div class="playground-section" style="background: #111927; border: 1px solid #1a2332; border-radius: 12px; padding: 24px; margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <h3 style="color: #ccd6f6; font-size: 18px; margin: 0;">⌨️ Live Typing & Flow Simulator</h3>
+                <span style="font-size: 12px; color: #00d4ff;">Type or practice code below to see your Flow Score update in real time!</span>
+            </div>
+            <textarea id="typingPlayground" placeholder="// Type code here to test typing dynamics...&#10;def calculate_flow(speed, accuracy):&#10;    return speed * 0.5 + accuracy * 0.5" rows="4" style="width: 100%; background: #0a0e17; border: 1px solid #1a2332; border-radius: 8px; color: #00d4ff; padding: 14px; font-family: 'Consolas', monospace; font-size: 14px; resize: vertical; outline: none; transition: border-color 0.2s;"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #8892b0; flex-wrap: wrap; gap: 10px;">
+                <span id="playgroundStats">Keys: 0 | Live WPM: 0 | Flow State: IDLE</span>
+                <button onclick="resetPlayground()" style="background: transparent; border: 1px solid #1a2332; color: #8892b0; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 11px;">Reset Playground</button>
+            </div>
+        </div>
+
+        <!-- Reports & Analytics Section -->
+        <section class="reports-section">
+            <h3>📊 Reports & Analytics</h3>
+            <div class="reports-grid">
+                <button onclick="downloadWeeklyReport()" class="report-btn">
+                    📅 Download Weekly Report (PDF)
+                </button>
+                <button onclick="showAnalytics()" class="report-btn">
+                    📈 View Weekly Analytics
+                </button>
+            </div>
+            <div id="analytics-panel" style="display:none;">
+                <!-- Filled by JS -->
+            </div>
+        </section>
+
         <!-- Sessions -->
         <div class="sessions-section">
-            <h3>📊 Session History</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin-bottom: 0;">📊 Session History</h3>
+                <button onclick="clearAllSessions()" class="clear-btn">🗑️ Clear All Sessions</button>
+            </div>
             <div style="overflow-x: auto;">
                 <table class="session-table">
                     <thead>
@@ -326,11 +377,12 @@
                             <th>Keystrokes</th>
                             <th>Flow Score</th>
                             <th>Status</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="sessionTable">
                         <tr>
-                            <td colspan="5" style="text-align: center; color: #8892b0; padding: 30px;">
+                            <td colspan="6" style="text-align: center; color: #8892b0; padding: 30px;">
                                 <div style="font-size: 48px; margin-bottom: 10px;">🚀</div>
                                 No sessions yet. Start coding!
                             </td>
@@ -380,7 +432,15 @@
                 
                 // State
                 let state, stateClass;
-                if (score >= 85) { state = 'FLOW STATE'; stateClass = 'flow'; }
+                if (data.state === 'NOT_CODE') {
+                    state = 'NOT_CODE';
+                    stateClass = 'not-code';
+                }
+                else if (score === 0 || data.state === 'IDLE') {
+                    state = 'IDLE';
+                    stateClass = 'idle';
+                }
+                else if (score >= 85) { state = 'FLOW STATE'; stateClass = 'flow'; }
                 else if (score >= 70) { state = 'PRODUCTIVE'; stateClass = 'productive'; }
                 else if (score >= 50) { state = 'WORKING'; stateClass = 'working'; }
                 else if (score >= 30) { state = 'STRUGGLING'; stateClass = 'struggling'; }
@@ -392,6 +452,16 @@
                 
                 // Suggestion
                 document.getElementById('suggestion').textContent = data.suggestion || 'Keep coding!';
+                
+                // Show paste penalty if applied
+                if (data.paste_penalty && data.paste_penalty > 0) {
+                    const sugg = document.getElementById('suggestion');
+                    sugg.style.color = '#ef4444';  // Red
+                    sugg.style.fontWeight = 'bold';
+                } else {
+                    document.getElementById('suggestion').style.color = '#8892b0';
+                    document.getElementById('suggestion').style.fontWeight = 'normal';
+                }
                 
                 // Components
                 const comps = data.components || {};
@@ -422,18 +492,49 @@
                 
                 const tableBody = document.getElementById('sessionTable');
                 if (data.sessions && data.sessions.length > 0) {
-                    tableBody.innerHTML = data.sessions.map(session => `
+                    tableBody.innerHTML = data.sessions.map(session => {
+                        const cleanId = session.filename.replace('session_', '').replace('.json', '');
+                        const createdStr = session.created_at || session.created;
+                        const scoreVal = session.flow_score ? Number(session.flow_score).toFixed(0) : '--';
+                        return `
                         <tr>
                             <td><code style="color: #00d4ff; font-size: 12px;">${session.filename}</code></td>
-                            <td>${new Date(session.created).toLocaleString()}</td>
+                            <td>${new Date(createdStr).toLocaleString()}</td>
                             <td>${session.entries}</td>
-                            <td>${session.flow_score ? session.flow_score.toFixed(0) : '--'}</td>
+                            <td>${scoreVal}</td>
                             <td><span class="status-badge ${session.flow_score > 50 ? 'active' : 'completed'}">${session.flow_score > 50 ? '● Active' : '✓ Completed'}</span></td>
+                            <td>
+                                <button onclick="downloadSessionReport('${cleanId}')" class="download-btn">📥 PDF</button>
+                            </td>
                         </tr>
-                    `).join('');
+                    `}).join('');
+                } else {
+                    tableBody.innerHTML = `
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: #8892b0; padding: 30px;">
+                                <div style="font-size: 48px; margin-bottom: 10px;">🚀</div>
+                                No sessions yet. Start coding!
+                            </td>
+                        </tr>
+                    `;
                 }
             } catch (error) {
                 console.error('Error fetching sessions:', error);
+            }
+        }
+
+        // Clear all sessions (session files)
+        async function clearAllSessions() {
+            if (confirm('Delete all session history? This cannot be undone.')) {
+                try {
+                    const response = await fetch('/api/clear-sessions', { method: 'POST' });
+                    const result = await response.json();
+                    alert(`Cleared ${result.deleted || 0} session(s).`);
+                    fetchSessions();
+                } catch (error) {
+                    console.error('Error clearing sessions:', error);
+                    alert('Failed to clear sessions.');
+                }
             }
         }
 
@@ -492,6 +593,378 @@
         setInterval(fetchLiveData, 5000);
         setInterval(fetchSessions, 30000);
         setInterval(checkAgentStatus, 10000);
+
+        async function downloadWeeklyReport() {
+            window.open('/api/export/weekly.pdf', '_blank');
+        }
+
+        async function downloadSessionReport(sessionId) {
+            window.open(`/api/export/${sessionId}.pdf`, '_blank');
+        }
+
+        async function showAnalytics() {
+            try {
+                const response = await fetch('/api/analytics/weekly');
+                const data = await response.json();
+                const panel = document.getElementById('analytics-panel');
+                if (!panel) return;
+                panel.style.display = 'block';
+                panel.innerHTML = `
+                    <div class="analytics-card">
+                        <h4>Weekly Summary</h4>
+                        <p>Total Sessions: ${data.sessions_count}</p>
+                        <p>Total Duration: ${Math.round(data.total_duration / 60)} minutes</p>
+                        <p>Average Flow Score: ${data.avg_flow_score ? data.avg_flow_score.toFixed(1) : 0}</p>
+                        <p>Best Day: ${data.best_day}</p>
+                    </div>
+                `;
+            } catch (err) {
+                console.error('Error fetching analytics:', err);
+            }
+        }
+
+        // Live Typing Playground Event Handlers
+        let pgKeystrokes = [];
+        let pgLastPress = null;
+        let pgBackspaces = 0;
+        let pgTotalPresses = 0;
+        let pgStartTime = null;
+        let pgSubmitTimer = null;
+
+        function detectCodeQuality(text) {
+            /**
+             * STRICT code detection that only accepts real English/code words.
+             * Gibberish like 'cbjhrnvkrcs' or 'pruntfd' → REJECTED.
+             */
+            if (!text || text.length < 8) return 0;
+            
+            // Get last 150 characters (most recent typing matters most)
+            const recent = text.slice(-150);
+            const len = recent.length;
+            
+            // ========== HARD GATE 1: Must have at least 2 code chars ==========
+            const codeChars = ['{', '}', '(', ')', '[', ']', ';', '=', ':', '<', '>', '_', '+', '-', '*', '/', '%'];
+            const codeCharCount = recent.split('').filter(c => codeChars.includes(c)).length;
+            if (codeCharCount < 2) return 0;
+            
+            // ========== HARD GATE 2: Must have at least 1 keyword ==========
+            const keywords = [
+                // Python
+                'def ', 'class ', 'return', 'import ', 'from ', 'print(', 'if ', 'else', 'elif',
+                'for ', 'while ', 'try', 'except', 'finally', 'with ', 'lambda', 'yield',
+                // JS/TS
+                'function ', 'const ', 'let ', 'var ', 'console.log(', '=>', 'document.',
+                // Java/C++/C#
+                'public ', 'private ', 'static ', 'void ', 'int ', 'String ', 'System.out.print',
+                'cout ', 'cin ', 'printf(', 'scanf(', '#include',
+                // Generic
+                'True', 'False', 'None', 'null', 'true', 'false', 'null', 'undefined'
+            ];
+            const foundKeywords = keywords.filter(kw => recent.includes(kw)).length;
+            if (foundKeywords === 0) return 0;
+            
+            // ========== CRITICAL: GIBBERISH WORD RATIO CHECK ==========
+            // Split text into word-like tokens
+            const tokens = recent.match(/[a-zA-Z]{2,}/g) || [];
+            
+            if (tokens.length < 3) {
+                // Not enough data
+                return foundKeywords > 0 ? 50 : 0;
+            }
+            
+            // Count how many tokens are "real" English-like words
+            let realWords = 0;
+            let gibberishWords = 0;
+            
+            const knownCodeWords = new Set([
+                'def', 'class', 'return', 'if', 'else', 'elif', 'for', 'while', 'import', 'from',
+                'print', 'function', 'const', 'let', 'var', 'console', 'log', 'try', 'except',
+                'finally', 'with', 'lambda', 'yield', 'async', 'await', 'public', 'private',
+                'static', 'void', 'int', 'float', 'double', 'bool', 'boolean', 'string', 'char',
+                'byte', 'long', 'short', 'new', 'this', 'self', 'true', 'false', 'null', 'none',
+                'undefined', 'main', 'include', 'printf', 'scanf', 'cout', 'cin', 'endl',
+                'system', 'out', 'hello', 'world', 'test', 'add', 'sum', 'get', 'set', 'init'
+            ]);
+            
+            for (const token of tokens) {
+                const lower = token.toLowerCase();
+                if (lower.length < 3) continue;
+                
+                // Check if it's a known code word
+                if (knownCodeWords.has(lower)) {
+                    realWords++;
+                    continue;
+                }
+                
+                // Calculate vowel ratio (real English words: 25-50% vowels)
+                const vowels = (lower.match(/[aeiou]/g) || []).length;
+                const vowelRatio = vowels / lower.length;
+                
+                // Check for impossible consonant clusters (gibberish indicator)
+                const badClusters = lower.match(/[bcdfghjklmnpqrstvwxz]{4,}/g);
+                const hasBadCluster = badClusters !== null;
+                
+                // Check if token ends with implausible pattern
+                const badEnding = /[bcdfghjklmnpqrstvwxz]{3,}$/.test(lower);
+                
+                // Decision: is this a real word?
+                const looksReal = (vowelRatio >= 0.20 && vowelRatio <= 0.55) && !hasBadCluster && !badEnding;
+                
+                if (looksReal) {
+                    realWords++;
+                } else {
+                    gibberishWords++;
+                }
+            }
+            
+            const totalWords = realWords + gibberishWords;
+            const realWordRatio = totalWords > 0 ? realWords / totalWords : 0;
+            
+            // ========== STRICT DECISION BASED ON WORD RATIO ==========
+            // If less than 30% of words are real → NOT CODE
+            if (realWordRatio < 0.30) return 0;
+            
+            // If less than 50% of words are real → Very low score
+            if (realWordRatio < 0.50) return 10;
+            
+            // If less than 70% of words are real → Low score
+            if (realWordRatio < 0.70) return 25;
+            
+            // ========== VALID CODE: Calculate actual score ==========
+            
+            // Signal 1: Keyword score (weight 30)
+            const keywordScore = Math.min(30, 10 + foundKeywords * 8);
+            
+            // Signal 2: Structural ratio (weight 25)
+            const structuralChars = ['(', ')', '{', '}', '[', ']', ';', ',', '=', ':', '<', '>'];
+            const structuralCount = recent.split('').filter(c => structuralChars.includes(c)).length;
+            const structuralRatio = structuralCount / len;
+            let structScore = 0;
+            if (structuralRatio >= 0.10) structScore = 25;
+            else if (structuralRatio >= 0.05) structScore = 18;
+            else if (structuralRatio >= 0.02) structScore = 10;
+            
+            // Signal 3: Whitespace/newlines (weight 15)
+            const newlines = (recent.match(/\n/g) || []).length;
+            const tabs = (recent.match(/\t/g) || []).length;
+            let wsScore = 0;
+            if (newlines + tabs >= 2) wsScore = 15;
+            else if (newlines + tabs >= 1) wsScore = 10;
+            else if ((recent.match(/ /g) || []).length >= 2) wsScore = 5;
+            
+            // Signal 4: Real word ratio bonus (weight 30)
+            const wordScore = Math.round(realWordRatio * 30);
+            
+            // ========== FINAL CALCULATION ==========
+            const rawScore = keywordScore + structScore + wsScore + wordScore;
+            
+            // Hard cap based on word ratio
+            const wordRatioCap = Math.round(realWordRatio * 100);
+            
+            return Math.min(rawScore, wordRatioCap);
+        }
+
+        const pgEl = document.getElementById('typingPlayground');
+        if (pgEl) {
+            pgEl.addEventListener('keydown', (e) => {
+                const now = performance.now() / 1000;
+                if (!pgStartTime) pgStartTime = now;
+                pgTotalPresses++;
+                if (e.key === 'Backspace') pgBackspaces++;
+
+                let flightTime = pgLastPress ? Math.max(0.01, now - pgLastPress) : 0.2;
+                pgLastPress = now;
+
+                pgKeystrokes.push({
+                    key: e.key,
+                    timestamp: now,
+                    flight_time: Math.min(2.0, flightTime)
+                });
+
+                // Calculate real-time stats
+                const flightSum = pgKeystrokes.reduce((acc, k) => acc + k.flight_time, 0);
+                const activeMin = Math.max(1.0, flightSum) / 60;
+                const liveWpm = Math.min(150, Math.round((pgTotalPresses / 5) / activeMin));
+                const backspaceRate = pgBackspaces / pgTotalPresses;
+
+                // Get current text and check code quality
+                const currentText = (pgEl.value || '') + (e.key === 'Enter' ? '\n' : (e.key && e.key.length === 1 ? e.key : ''));
+                const codeQuality = detectCodeQuality(currentText);
+
+                // Double check on last 30 chars only
+                const lastChunk = currentText.slice(-30);
+                const lastChunkQuality = detectCodeQuality(lastChunk);
+                
+                // If recent typing is bad, drop score
+                const effectiveCodeQuality = Math.min(codeQuality, lastChunkQuality);
+                
+                // If NOT code, force flow score to 0
+                if (effectiveCodeQuality === 0 || effectiveCodeQuality < 20) {
+                    document.getElementById('playgroundStats').textContent = 
+                        `Keys: ${pgTotalPresses} | Live WPM: ${liveWpm} | ⚠️ NOT_CODE (gibberish detected)`;
+                    
+                    // Immediately update UI gauge
+                    document.getElementById('flowScore').textContent = '0';
+                    document.getElementById('gaugeScore').textContent = '0';
+                    document.getElementById('gaugeContainer').style.background = 'conic-gradient(#00d4ff 0% 0%, #1a2332 0% 100%)';
+                    const stateEl = document.getElementById('gaugeState');
+                    stateEl.textContent = 'NOT_CODE';
+                    stateEl.className = 'state not-code';
+                    document.getElementById('suggestion').textContent = '⚠️ Not detected as code. Write real programming syntax!';
+                    document.getElementById('compSpeed').style.width = '0%';
+                    document.getElementById('compSpeedText').textContent = '0%';
+                    document.getElementById('compAccuracy').style.width = '0%';
+                    document.getElementById('compAccuracyText').textContent = '0%';
+                    document.getElementById('compFocus').style.width = '0%';
+                    document.getElementById('compFocusText').textContent = '0%';
+                    document.getElementById('compClarity').style.width = '0%';
+                    document.getElementById('compClarityText').textContent = '0%';
+                    document.getElementById('compConsistency').style.width = '0%';
+                    document.getElementById('compConsistencyText').textContent = '0%';
+
+                    // Update backend to record NOT_CODE
+                    clearTimeout(pgSubmitTimer);
+                    pgSubmitTimer = setTimeout(async () => {
+                        try {
+                            await fetch('/api/submit', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    session_id: 'playground_session',
+                                    user_id: 'playground_user',
+                                    flow_score: {
+                                        score: 0,
+                                        state: 'NOT_CODE',
+                                        suggestion: '⚠️ Not detected as code. Write real programming syntax!',
+                                        components: { speed: 0, accuracy: 0, focus: 0, clarity: 0, consistency: 0, code_quality: 0 }
+                                    },
+                                    keystroke_stats: {
+                                        total_events: pgTotalPresses,
+                                        presses: pgTotalPresses,
+                                        session_duration: Math.max(1.0, now - pgStartTime),
+                                        active_time_seconds: flightSum,
+                                        idle_time_seconds: 0,
+                                        flight_times: pgKeystrokes.map(k => k.flight_time),
+                                        wpm: liveWpm
+                                    }
+                                })
+                            });
+                        } catch (err) {}
+                    }, 300);
+                    return;
+                }
+                
+                // If IS code, use code-quality-weighted calculation
+                const speedComp = Math.min(100, Math.round(liveWpm * 1.5));
+                const accuracyComp = Math.max(20, Math.round((1 - backspaceRate) * 100));
+                const focusComp = Math.min(100, Math.max(30, Math.round(100 - (flightSum / pgKeystrokes.length) * 30)));
+                const clarityComp = Math.round(effectiveCodeQuality);
+                const consistencyComp = 80;
+
+                // NEW FORMULA: Include code_quality as a major component
+                const liveScore = Math.round(
+                    speedComp * 0.15 +
+                    accuracyComp * 0.15 +
+                    focusComp * 0.20 +
+                    effectiveCodeQuality * 0.30 +      // ← Code quality has highest weight
+                    consistencyComp * 0.20
+                );
+                
+                // HARD CAP based on code quality
+                let finalScore = liveScore;
+                if (effectiveCodeQuality < 30) finalScore = Math.min(finalScore, 20);
+                else if (effectiveCodeQuality < 50) finalScore = Math.min(finalScore, 45);
+                else if (effectiveCodeQuality < 70) finalScore = Math.min(finalScore, 75);
+
+                let liveState = 'WORKING';
+                if (finalScore >= 85) liveState = 'FLOW STATE';
+                else if (finalScore >= 70) liveState = 'PRODUCTIVE';
+                else if (finalScore >= 50) liveState = 'WORKING';
+                else if (finalScore >= 30) liveState = 'STRUGGLING';
+                else if (finalScore <= 15 || effectiveCodeQuality <= 15) liveState = 'NOT_CODE';
+                else liveState = 'BLOCKED';
+
+                document.getElementById('playgroundStats').textContent = 
+                    `Keys: ${pgTotalPresses} | Live WPM: ${liveWpm} | Code Quality: ${effectiveCodeQuality} | Flow: ${finalScore} (${liveState})`;
+
+                // Immediately update UI gauge
+                document.getElementById('flowScore').textContent = finalScore;
+                document.getElementById('gaugeScore').textContent = finalScore;
+                document.getElementById('gaugeContainer').style.background = `conic-gradient(#00d4ff 0% ${finalScore}%, #1a2332 ${finalScore}% 100%)`;
+                const stateEl = document.getElementById('gaugeState');
+                stateEl.textContent = liveState;
+                stateEl.className = `state ${liveState === 'FLOW STATE' ? 'flow' : liveState === 'PRODUCTIVE' ? 'productive' : liveState === 'WORKING' ? 'working' : liveState === 'STRUGGLING' ? 'struggling' : (liveState === 'NOT_CODE' ? 'not-code' : 'blocked')}`;
+                document.getElementById('suggestion').textContent = finalScore >= 70 ? '⚡ Peak flow achieved! Keep typing smoothly.' : 'Steadily typing. Keep the rhythm going!';
+                document.getElementById('compSpeed').style.width = speedComp + '%';
+                document.getElementById('compSpeedText').textContent = speedComp + '%';
+                document.getElementById('compAccuracy').style.width = accuracyComp + '%';
+                document.getElementById('compAccuracyText').textContent = accuracyComp + '%';
+                document.getElementById('compFocus').style.width = focusComp + '%';
+                document.getElementById('compFocusText').textContent = focusComp + '%';
+                document.getElementById('compClarity').style.width = clarityComp + '%';
+                document.getElementById('compClarityText').textContent = clarityComp + '%';
+                document.getElementById('compConsistency').style.width = consistencyComp + '%';
+                document.getElementById('compConsistencyText').textContent = consistencyComp + '%';
+
+                // Debounced submit to backend so the main gauge and cards update immediately
+                clearTimeout(pgSubmitTimer);
+                pgSubmitTimer = setTimeout(async () => {
+                    try {
+                        await fetch('/api/submit', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: 'playground_session',
+                                user_id: 'playground_user',
+                                flow_score: {
+                                    score: finalScore,
+                                    state: liveState,
+                                    suggestion: finalScore >= 70 ? '⚡ Peak flow achieved! Keep typing smoothly.' : 'Steadily typing. Keep the rhythm going!',
+                                    components: {
+                                        speed: speedComp,
+                                        accuracy: accuracyComp,
+                                        focus: focusComp,
+                                        clarity: clarityComp,
+                                        consistency: consistencyComp,
+                                        code_quality: Math.round(finalCodeQuality)
+                                    }
+                                },
+                                keystroke_stats: {
+                                    total_events: pgTotalPresses,
+                                    presses: pgTotalPresses,
+                                    session_duration: Math.max(1.0, now - pgStartTime),
+                                    active_time_seconds: flightSum,
+                                    idle_time_seconds: Math.max(0, (now - pgStartTime) - flightSum),
+                                    flight_times: pgKeystrokes.map(k => k.flight_time),
+                                    wpm: liveWpm
+                                }
+                            })
+                        });
+                        checkAgentStatus();
+                    } catch (err) {
+                        console.error('Playground submit error:', err);
+                    }
+                }, 300);
+            });
+        }
+
+        function resetPlayground() {
+            pgKeystrokes = [];
+            pgLastPress = null;
+            pgBackspaces = 0;
+            pgTotalPresses = 0;
+            pgStartTime = null;
+            if (pgEl) pgEl.value = '';
+            document.getElementById('playgroundStats').textContent = 'Keys: 0 | Live WPM: 0 | Flow State: IDLE';
+            document.getElementById('flowScore').textContent = '0';
+            document.getElementById('gaugeScore').textContent = '0';
+            document.getElementById('gaugeContainer').style.background = 'conic-gradient(#00d4ff 0% 0%, #1a2332 0% 100%)';
+            const stateEl = document.getElementById('gaugeState');
+            stateEl.textContent = 'IDLE';
+            stateEl.className = 'state idle';
+            document.getElementById('suggestion').textContent = 'Ready to code. Start typing!';
+        }
     </script>
+    <script src="/static/script.js"></script>
 </body>
 </html>

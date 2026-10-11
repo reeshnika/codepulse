@@ -1,15 +1,17 @@
-﻿"""
+"""
 CodePulse REST API Endpoints
 Blueprint for receiving telemetry, serving live data, and managing sessions.
 """
 
 import os
+import time
 import glob
 import json
 import logging
-from datetime import datetime
-from flask import Blueprint, request, jsonify
+from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify, send_file
 from backend.database import get_db
+from backend.reports import ReportGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,8 @@ latest_data = {
     },
     'keystrokes': 0,
     'session_time': 0.0,
-    'wpm': 0.0
+    'wpm': 0.0,
+    'paste_penalty': 0
 }
 
 
@@ -96,8 +99,14 @@ def submit():
             keystrokes = stats.get('total_events', stats.get('presses', 0))
             session_time = float(stats.get('session_duration', 0))
             presses = stats.get('presses', 0)
-            if session_time > 0:
-                wpm = (presses / 5.0) / (session_time / 60.0)
+            if 'wpm' in stats:
+                wpm = float(stats['wpm'])
+            elif session_time > 0:
+                flight_times = stats.get('flight_times', [])
+                active_time = sum(flight_times) if flight_times else float(stats.get('active_time_seconds', session_time))
+                if active_time < 1.0:
+                    active_time = 1.0
+                wpm = min(150.0, (presses / 5.0) / (active_time / 60.0))
             else:
                 wpm = 0.0
         else:
@@ -106,6 +115,12 @@ def submit():
             wpm = float(payload.get('wpm', latest_data.get('wpm', 0.0)))
 
         # Update in-memory real-time state
+        paste_penalty_val = 0
+        if isinstance(flow_raw, dict) and 'paste_penalty' in flow_raw:
+            paste_penalty_val = flow_raw['paste_penalty']
+        elif 'paste_penalty' in payload:
+            paste_penalty_val = payload['paste_penalty']
+
         latest_data.update({
             'flow_score': round(score, 1),
             'state': state,
@@ -113,7 +128,8 @@ def submit():
             'components': components,
             'keystrokes': keystrokes,
             'session_time': round(session_time, 1),
-            'wpm': round(wpm, 1)
+            'wpm': round(wpm, 1),
+            'paste_penalty': paste_penalty_val
         })
 
         # Save to SQLite database
@@ -171,6 +187,15 @@ def submit():
                             float(item.get('flight_time', 0.0) or 0.0),
                             float(item.get('dwell_time', 0.0) or 0.0)
                         ))
+
+            # 4. Insert or Ignore User Fingerprint
+            fingerprint = payload.get('fingerprint')
+            if fingerprint:
+                user_id_to_store = payload.get('user_id') or session_id
+                cursor.execute('''
+                    INSERT OR IGNORE INTO users (user_id, fingerprint, created_at)
+                    VALUES (?, ?, ?)
+                ''', (user_id_to_store, str(fingerprint), timestamp))
 
             conn.commit()
         except Exception as db_err:
@@ -342,3 +367,270 @@ def clear_all():
         'status': 'success',
         'message': 'All data cleared successfully'
     }), 200
+
+
+@api.route('/clear-sessions', methods=['POST'])
+def clear_sessions():
+    """Deletes all session_*.json files in data/ directory"""
+    session_files = glob.glob(os.path.join(DATA_DIR, 'session_*.json'))
+    deleted_count = 0
+    for file_path in session_files:
+        try:
+            os.remove(file_path)
+            deleted_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to delete {file_path}: {e}")
+
+    return jsonify({
+        'status': 'cleared',
+        'deleted': deleted_count
+    }), 200
+
+
+last_agent_heartbeat = {
+    'timestamp': None,
+    'session_id': None
+}
+
+
+@api.route('/agent/heartbeat', methods=['POST', 'GET'])
+def agent_heartbeat():
+    """Agent sends heartbeat ping to confirm it is actively running and connected"""
+    global last_agent_heartbeat
+    data = request.get_json(silent=True) or {}
+    last_agent_heartbeat['timestamp'] = time.time()
+    last_agent_heartbeat['session_id'] = data.get('session_id')
+    return jsonify({
+        'status': 'ok',
+        'active': True,
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
+
+@api.route('/agent/status', methods=['GET'])
+def agent_status():
+    """Check if agent is connected and recently active"""
+    import time
+    now = time.time()
+
+    # 1. Check live heartbeat ping (within last 45 seconds)
+    if last_agent_heartbeat.get('timestamp') and (now - last_agent_heartbeat['timestamp'] < 45):
+        time_diff = now - last_agent_heartbeat['timestamp']
+        return jsonify({
+            'connected': True,
+            'active': True,
+            'heartbeat': True,
+            'session_id': last_agent_heartbeat.get('session_id'),
+            'seconds_ago': int(time_diff),
+            'timestamp': datetime.fromtimestamp(last_agent_heartbeat['timestamp']).isoformat(),
+            'message': 'Agent is connected and actively monitoring.'
+        }), 200
+
+    # 2. Check recent data files
+    recent_files = glob.glob(os.path.join(DATA_DIR, '*.json'))
+    if recent_files:
+        latest = max(recent_files, key=os.path.getmtime)
+        file_time = os.path.getmtime(latest)
+        time_diff = now - file_time
+
+        if time_diff < 300:
+            return jsonify({
+                'connected': True,
+                'active': True,
+                'last_data': os.path.basename(latest),
+                'timestamp': datetime.fromtimestamp(file_time).isoformat(),
+                'seconds_ago': int(time_diff)
+            }), 200
+        else:
+            return jsonify({
+                'connected': True,
+                'active': False,
+                'last_data': os.path.basename(latest),
+                'timestamp': datetime.fromtimestamp(file_time).isoformat(),
+                'seconds_ago': int(time_diff),
+                'message': 'Agent is idle.'
+            }), 200
+
+    return jsonify({
+        'connected': False,
+        'active': False,
+        'message': 'No data received from agent.'
+    }), 200
+
+
+@api.route('/users', methods=['GET'])
+def get_users():
+    """Returns list of all users from database with their fingerprints"""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT id, user_id, fingerprint, created_at FROM users ORDER BY id DESC')
+        users_list = [dict(row) for row in cursor.fetchall()]
+        return jsonify({
+            'status': 'success',
+            'users': users_list,
+            'total': len(users_list)
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+def _compute_analytics(days=7):
+    """Computes session and flow analytics for the past N days."""
+    cutoff = datetime.now() - timedelta(days=days)
+    files = glob.glob(os.path.join(DATA_DIR, "*.json"))
+    sessions_in_window = []
+    daily_buckets = {}
+    for i in range(days):
+        day_str = (datetime.now() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        daily_buckets[day_str] = []
+
+    for f in files:
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(f))
+            if mtime >= cutoff:
+                with open(f, 'r', encoding='utf-8') as handle:
+                    data = json.load(handle)
+                if isinstance(data, list):
+                    data = data[-1] if data else {}
+                if isinstance(data, dict):
+                    data['_mtime'] = mtime
+                    sessions_in_window.append(data)
+                    day_key = mtime.strftime("%Y-%m-%d")
+                    score = data.get('flow_score', {}).get('score', 0) if isinstance(data.get('flow_score'), dict) else data.get('flow_score', 0)
+                    try:
+                        score = float(score)
+                    except (ValueError, TypeError):
+                        score = 0.0
+                    if day_key in daily_buckets:
+                        daily_buckets[day_key].append(score)
+        except Exception:
+            continue
+
+    total_duration = sum(s.get('keystroke_stats', {}).get('session_duration', 0) for s in sessions_in_window)
+    scores = []
+    for s in sessions_in_window:
+        sc = s.get('flow_score', {}).get('score', 0) if isinstance(s.get('flow_score'), dict) else s.get('flow_score', 0)
+        try:
+            scores.append(float(sc))
+        except (ValueError, TypeError):
+            pass
+
+    avg_flow = sum(scores) / len(scores) if scores else 0.0
+
+    daily_scores = []
+    best_day = "N/A"
+    best_score = -1.0
+    for day_str in sorted(daily_buckets.keys()):
+        s_list = daily_buckets[day_str]
+        d_avg = sum(s_list) / len(s_list) if s_list else 0.0
+        daily_scores.append({
+            'date': day_str,
+            'score': round(d_avg, 1),
+            'sessions': len(s_list)
+        })
+        if d_avg > best_score and len(s_list) > 0:
+            best_score = d_avg
+            best_day = day_str
+
+    return {
+        'sessions_count': len(sessions_in_window),
+        'total_duration': round(total_duration, 1),
+        'avg_flow_score': round(avg_flow, 1),
+        'best_day': best_day,
+        'daily_scores': daily_scores
+    }
+
+
+@api.route('/report/<session_id>', methods=['GET'])
+def get_session_report(session_id):
+    """Load session JSON from data/session_<session_id>.json and return full data"""
+    clean_id = os.path.basename(session_id)
+    candidates = [
+        os.path.join(DATA_DIR, f"session_{clean_id}.json"),
+        os.path.join(DATA_DIR, f"{clean_id}.json"),
+        os.path.join(DATA_DIR, clean_id)
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return jsonify(data), 200
+            except Exception as e:
+                return jsonify({'error': f'Failed to read report: {e}'}), 500
+
+    return jsonify({'error': f'Session {session_id} not found'}), 404
+
+
+@api.route('/export/<session_id>.pdf', methods=['GET'])
+def export_session_pdf(session_id):
+    """Generate and return PDF for a specific session"""
+    clean_id = os.path.basename(session_id)
+    # Check if session data exists
+    candidates = [
+        os.path.join(DATA_DIR, f"session_{clean_id}.json"),
+        os.path.join(DATA_DIR, f"{clean_id}.json"),
+        os.path.join(DATA_DIR, clean_id)
+    ]
+    session_data = {}
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    session_data = json.load(f)
+                break
+            except Exception:
+                pass
+
+    pdf_path = os.path.join(DATA_DIR, f"codepulse_report_{clean_id}.pdf")
+    try:
+        generator = ReportGenerator(data_dir=DATA_DIR)
+        generator.generate_session_pdf(clean_id, session_data=session_data, output_path=pdf_path)
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"codepulse_report_{clean_id}.pdf"
+        )
+    except Exception as e:
+        logger.error(f"Error generating session PDF: {e}")
+        return jsonify({'error': f'Failed to generate PDF: {e}'}), 500
+
+
+@api.route('/export/weekly.pdf', methods=['GET'])
+def export_weekly_pdf():
+    """Generate and return weekly summary PDF"""
+    pdf_path = os.path.join(DATA_DIR, "codepulse_weekly_report.pdf")
+    try:
+        generator = ReportGenerator(data_dir=DATA_DIR)
+        generator.generate_weekly_summary_pdf(days=7, output_path=pdf_path)
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name="codepulse_weekly_report.pdf"
+        )
+    except Exception as e:
+        logger.error(f"Error generating weekly PDF: {e}")
+        return jsonify({'error': f'Failed to generate weekly PDF: {e}'}), 500
+
+
+@api.route('/analytics/weekly', methods=['GET'])
+def weekly_analytics():
+    """Return weekly telemetry analytics"""
+    data = _compute_analytics(days=7)
+    return jsonify(data), 200
+
+
+@api.route('/analytics/monthly', methods=['GET'])
+def monthly_analytics():
+    """Return monthly telemetry analytics"""
+    data = _compute_analytics(days=30)
+    return jsonify(data), 200
+
+
+

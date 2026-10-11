@@ -1,0 +1,106 @@
+/* CodePulse Reports & Analytics Styles */
+.reports-section {
+    background: #111927;
+    border: 1px solid #1a2332;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 30px;
+}
+
+.reports-section h3 {
+    color: #ccd6f6;
+    margin-bottom: 16px;
+    font-size: 18px;
+}
+
+.reports-grid {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.report-btn {
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(123, 47, 252, 0.1));
+    border: 1px solid #00d4ff;
+    color: #00d4ff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.15);
+}
+
+.report-btn:hover {
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.25), rgba(123, 47, 252, 0.25));
+    border-color: #00f0ff;
+    color: #ffffff;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.45);
+    transform: translateY(-2px);
+}
+
+.download-btn {
+    background: transparent;
+    border: 1px solid #00d4ff;
+    color: #00d4ff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.download-btn:hover {
+    background: rgba(0, 212, 255, 0.2);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+.analytics-card {
+    background: #0a0e17;
+    border: 1px solid #1a2332;
+    border-left: 4px solid #7b2ffc;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 15px;
+    color: #e0e0e0;
+}
+
+.analytics-card h4 {
+    color: #00d4ff;
+    margin-bottom: 12px;
+    font-size: 16px;
+}
+
+.analytics-card p {
+    margin: 6px 0;
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+.clear-btn {
+    background: rgba(255, 71, 87, 0.15);
+    border: 1px solid #ff4757;
+    color: #ff4757;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.clear-btn:hover {
+    background: #ff4757;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(255, 71, 87, 0.4);
+}
+
+.state.not-code {
+    background: #6b7280;
+    color: #ffffff;
+    border: 1px solid #9ca3af;
+}
+

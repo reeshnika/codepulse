@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from backend.app import app
 from backend.database import init_db, get_db
 
@@ -72,3 +72,20 @@ def test_clear_data(client):
 def test_index_route(client):
     res = client.get('/')
     assert res.status_code == 200
+
+
+def test_clear_sessions(client, tmp_path):
+    import os
+    from backend.routes.api import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    dummy_session = os.path.join(DATA_DIR, 'session_test_clear_dummy.json')
+    with open(dummy_session, 'w', encoding='utf-8') as f:
+        f.write('{"test": true}')
+
+    assert os.path.exists(dummy_session)
+    res = client.post('/api/clear-sessions')
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data.get('status') == 'cleared'
+    assert data.get('deleted') >= 1
+    assert not os.path.exists(dummy_session)

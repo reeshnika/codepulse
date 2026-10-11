@@ -1,19 +1,26 @@
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
-.venv/
-venv/
+*$py.class
+*.so
+.Python
 env/
-.env
+venv/
+.venv/
+ENV/
 
-# Data files (large & private)
-keystrokes_*.json
-code_evolution_*.json
-session_*.json
+# Data & Storage
 data/
 *.db
 *.sqlite3
+keystrokes_*.json
+sessions_*.json
+session_*.json
+code_evolution_*.json
+
+# Models
+models/*.pkl
+models/*.joblib
 
 # IDE
 .vscode/
@@ -25,8 +32,14 @@ data/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs & temp
 *.log
+scratch/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Node (for VS Code extension)
 node_modules/
