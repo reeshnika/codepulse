@@ -633,141 +633,129 @@
 
         function detectCodeQuality(text) {
             /**
-             * STRICT code detection that only accepts real English/code words.
-             * Gibberish like 'cbjhrnvkrcs' or 'pruntfd' → REJECTED.
+             * Weighted code quality detector.
+             * Recent typing matters most. Old typing decays.
              */
-            if (!text || text.length < 8) return 0;
+            if (!text || text.length < 6) return 0;
             
-            // Get last 150 characters (most recent typing matters most)
-            const recent = text.slice(-150);
+            // Use only last 250 chars to keep performance good
+            const recent = text.slice(-250);
             const len = recent.length;
             
-            // ========== HARD GATE 1: Must have at least 2 code chars ==========
-            const codeChars = ['{', '}', '(', ')', '[', ']', ';', '=', ':', '<', '>', '_', '+', '-', '*', '/', '%'];
-            const codeCharCount = recent.split('').filter(c => codeChars.includes(c)).length;
-            if (codeCharCount < 2) return 0;
+            // Split into windows: newest 60 chars (weight 70%) + older (weight 30%)
+            const newest = recent.slice(-60);
+            const older = recent.slice(-200, -60);
             
-            // ========== HARD GATE 2: Must have at least 1 keyword ==========
-            const keywords = [
-                // Python
-                'def ', 'class ', 'return', 'import ', 'from ', 'print(', 'if ', 'else', 'elif',
-                'for ', 'while ', 'try', 'except', 'finally', 'with ', 'lambda', 'yield',
-                // JS/TS
-                'function ', 'const ', 'let ', 'var ', 'console.log(', '=>', 'document.',
-                // Java/C++/C#
-                'public ', 'private ', 'static ', 'void ', 'int ', 'String ', 'System.out.print',
-                'cout ', 'cin ', 'printf(', 'scanf(', '#include',
-                // Generic
-                'True', 'False', 'None', 'null', 'true', 'false', 'null', 'undefined'
-            ];
-            const foundKeywords = keywords.filter(kw => recent.includes(kw)).length;
-            if (foundKeywords === 0) return 0;
+            const newestScore = scoreChunk(newest);
+            const olderScore = older ? scoreChunk(older) : newestScore;
             
-            // ========== CRITICAL: GIBBERISH WORD RATIO CHECK ==========
-            // Split text into word-like tokens
-            const tokens = recent.match(/[a-zA-Z]{2,}/g) || [];
+            // Weighted combination
+            let combined = Math.round(newestScore * 0.70 + olderScore * 0.30);
             
-            if (tokens.length < 3) {
-                // Not enough data
-                return foundKeywords > 0 ? 50 : 0;
+            // If newest chunk has strong code signals, boost the score
+            const newestKeywords = ['def ', 'class ', 'return', 'import ', 'from ', 'print(',
+                                   'printf(', 'scanf(', 'cout ', 'cin ', 'console.log(',
+                                   'function ', 'public ', 'private ', 'static ', 'void ',
+                                   'int ', 'String ', 'System.out', 'if ', 'for ', 'while '];
+            const hasStrongNewest = newestKeywords.some(kw => newest.includes(kw));
+            
+            if (hasStrongNewest && newestScore >= 40) {
+                // User is typing real code NOW → boost
+                combined = Math.max(combined, Math.round(newestScore * 0.85));
             }
             
-            // Count how many tokens are "real" English-like words
-            let realWords = 0;
-            let gibberishWords = 0;
+            return Math.max(0, Math.min(100, combined));
+        }
+
+        // Helper function - scores a single text chunk
+        function scoreChunk(chunk) {
+            if (!chunk || chunk.length < 4) return 0;
             
+            const codeChars = ['{', '}', '(', ')', '[', ']', ';', '=', ':', '<', '>', '_', '+', '-', '*', '/', '%', '"', "'"];
+            const codeCharCount = chunk.split('').filter(c => codeChars.includes(c)).length;
+            
+            const keywords = [
+                'def ', 'class ', 'return', 'import ', 'from ', 'print(', 'printf(', 'scanf(',
+                'cout ', 'cin ', 'console.log(', 'function ', 'const ', 'let ', 'var ',
+                'public ', 'private ', 'static ', 'void ', 'int ', 'String ', 'System.out',
+                'if ', 'else', 'for ', 'while ', 'try', 'catch', 'except', 'None', 'True', 'False',
+                'null', 'true', 'false', 'nullptr', 'self.', 'this.', 'new ', '=>'
+            ];
+            const foundKeywords = keywords.filter(kw => chunk.includes(kw)).length;
+            
+            // Token analysis
+            const tokens = chunk.match(/[a-zA-Z]{2,}/g) || [];
             const knownCodeWords = new Set([
                 'def', 'class', 'return', 'if', 'else', 'elif', 'for', 'while', 'import', 'from',
-                'print', 'function', 'const', 'let', 'var', 'console', 'log', 'try', 'except',
-                'finally', 'with', 'lambda', 'yield', 'async', 'await', 'public', 'private',
-                'static', 'void', 'int', 'float', 'double', 'bool', 'boolean', 'string', 'char',
-                'byte', 'long', 'short', 'new', 'this', 'self', 'true', 'false', 'null', 'none',
-                'undefined', 'main', 'include', 'printf', 'scanf', 'cout', 'cin', 'endl',
-                'system', 'out', 'hello', 'world', 'test', 'add', 'sum', 'get', 'set', 'init'
+                'print', 'len', 'range', 'list', 'dict', 'tuple', 'set', 'str', 'int', 'float',
+                'try', 'except', 'finally', 'with', 'lambda', 'yield', 'async', 'await',
+                'function', 'const', 'let', 'var', 'console', 'log', 'document', 'window',
+                'public', 'private', 'protected', 'static', 'void', 'long', 'short', 'byte',
+                'char', 'boolean', 'double', 'string', 'system', 'out', 'println',
+                'main', 'args', 'new', 'this', 'super', 'extends', 'implements', 'interface',
+                'include', 'printf', 'scanf', 'cout', 'cin', 'endl', 'std', 'using', 'namespace',
+                'struct', 'enum', 'typedef', 'sizeof', 'malloc', 'free', 'fopen', 'fclose',
+                'null', 'none', 'undefined', 'true', 'false', 'self', 'hello', 'world',
+                'test', 'add', 'sum', 'get', 'set', 'init', 'input', 'output',
+                'sort', 'search', 'find', 'count', 'max', 'min', 'abs', 'pow', 'sqrt'
             ]);
+            
+            let realWords = 0;
+            let gibberishWords = 0;
             
             for (const token of tokens) {
                 const lower = token.toLowerCase();
                 if (lower.length < 3) continue;
                 
-                // Check if it's a known code word
                 if (knownCodeWords.has(lower)) {
                     realWords++;
                     continue;
                 }
                 
-                // Calculate vowel ratio (real English words: 25-50% vowels)
                 const vowels = (lower.match(/[aeiou]/g) || []).length;
                 const vowelRatio = vowels / lower.length;
-                
-                // Check for impossible consonant clusters (gibberish indicator)
-                const badClusters = lower.match(/[bcdfghjklmnpqrstvwxz]{4,}/g);
-                const hasBadCluster = badClusters !== null;
-                
-                // Check if token ends with implausible pattern
+                const hasBadCluster = /[bcdfghjklmnpqrstvwxz]{4,}/.test(lower);
                 const badEnding = /[bcdfghjklmnpqrstvwxz]{3,}$/.test(lower);
                 
-                // Decision: is this a real word?
                 const looksReal = (vowelRatio >= 0.20 && vowelRatio <= 0.55) && !hasBadCluster && !badEnding;
                 
-                if (looksReal) {
-                    realWords++;
-                } else {
-                    gibberishWords++;
-                }
+                if (looksReal) realWords++;
+                else gibberishWords++;
             }
             
             const totalWords = realWords + gibberishWords;
-            const realWordRatio = totalWords > 0 ? realWords / totalWords : 0;
+            const realWordRatio = totalWords > 0 ? realWords / totalWords : 0.5;
             
-            // ========== STRICT DECISION BASED ON WORD RATIO ==========
-            // If less than 30% of words are real → NOT CODE
-            if (realWordRatio < 0.30) return 0;
+            // Base score
+            let score = 0;
             
-            // If less than 50% of words are real → Very low score
-            if (realWordRatio < 0.50) return 10;
+            // Signals
+            if (codeCharCount >= 2) score += 15;
+            if (codeCharCount >= 5) score += 10;
+            if (foundKeywords >= 1) score += 20;
+            if (foundKeywords >= 2) score += 15;
             
-            // If less than 70% of words are real → Low score
-            if (realWordRatio < 0.70) return 25;
+            // Word ratio score (0-40)
+            score += Math.round(realWordRatio * 40);
             
-            // ========== VALID CODE: Calculate actual score ==========
+            // Penalty for gibberish words (softer than before)
+            if (totalWords > 3) {
+                const gibberishRatio = gibberishWords / totalWords;
+                if (gibberishRatio > 0.7) score -= 30;
+                else if (gibberishRatio > 0.5) score -= 15;
+            }
             
-            // Signal 1: Keyword score (weight 30)
-            const keywordScore = Math.min(30, 10 + foundKeywords * 8);
-            
-            // Signal 2: Structural ratio (weight 25)
-            const structuralChars = ['(', ')', '{', '}', '[', ']', ';', ',', '=', ':', '<', '>'];
-            const structuralCount = recent.split('').filter(c => structuralChars.includes(c)).length;
-            const structuralRatio = structuralCount / len;
-            let structScore = 0;
-            if (structuralRatio >= 0.10) structScore = 25;
-            else if (structuralRatio >= 0.05) structScore = 18;
-            else if (structuralRatio >= 0.02) structScore = 10;
-            
-            // Signal 3: Whitespace/newlines (weight 15)
-            const newlines = (recent.match(/\n/g) || []).length;
-            const tabs = (recent.match(/\t/g) || []).length;
-            let wsScore = 0;
-            if (newlines + tabs >= 2) wsScore = 15;
-            else if (newlines + tabs >= 1) wsScore = 10;
-            else if ((recent.match(/ /g) || []).length >= 2) wsScore = 5;
-            
-            // Signal 4: Real word ratio bonus (weight 30)
-            const wordScore = Math.round(realWordRatio * 30);
-            
-            // ========== FINAL CALCULATION ==========
-            const rawScore = keywordScore + structScore + wsScore + wordScore;
-            
-            // Hard cap based on word ratio
-            const wordRatioCap = Math.round(realWordRatio * 100);
-            
-            return Math.min(rawScore, wordRatioCap);
+            return Math.max(0, Math.min(100, score));
         }
 
         const pgEl = document.getElementById('typingPlayground');
         if (pgEl) {
             pgEl.addEventListener('keydown', (e) => {
                 const now = performance.now() / 1000;
+                // Smooth score transitions - prevents rapid 0→100→0 flips
+                if (typeof window._lastDisplayedScore === 'undefined') {
+                    window._lastDisplayedScore = 0;
+                }
                 if (!pgStartTime) pgStartTime = now;
                 pgTotalPresses++;
                 if (e.key === 'Backspace') pgBackspaces++;
@@ -795,30 +783,42 @@
                 const lastChunk = currentText.slice(-30);
                 const lastChunkQuality = detectCodeQuality(lastChunk);
                 
-                // If recent typing is bad, drop score
-                const effectiveCodeQuality = Math.min(codeQuality, lastChunkQuality);
+                // Trust the full-text score if the recent chunk has SOME code content
+                // Only force to 0 if the recent chunk is really bad AND the full text is also bad
+                let effectiveCodeQuality;
+                if (lastChunkQuality >= 20) {
+                    effectiveCodeQuality = Math.max(codeQuality, lastChunkQuality);
+                } else if (codeQuality >= 40) {
+                    effectiveCodeQuality = codeQuality;
+                } else {
+                    effectiveCodeQuality = Math.min(codeQuality, lastChunkQuality);
+                }
                 
-                // If NOT code, force flow score to 0
-                if (effectiveCodeQuality === 0 || effectiveCodeQuality < 20) {
+                // Only force NOT_CODE if BOTH the full text AND recent chunk are bad
+                if (effectiveCodeQuality < 15 && currentText.length > 20) {
+                    // SOFT penalty: show low score, not instant zero
+                    const softScore = Math.max(0, Math.min(20, Math.round(effectiveCodeQuality * 1.2)));
+                    window._lastDisplayedScore = softScore;
+
                     document.getElementById('playgroundStats').textContent = 
-                        `Keys: ${pgTotalPresses} | Live WPM: ${liveWpm} | ⚠️ NOT_CODE (gibberish detected)`;
+                        `Keys: ${pgTotalPresses} | Live WPM: ${liveWpm} | ⚠️ Low code quality: ${effectiveCodeQuality}`;
                     
                     // Immediately update UI gauge
-                    document.getElementById('flowScore').textContent = '0';
-                    document.getElementById('gaugeScore').textContent = '0';
-                    document.getElementById('gaugeContainer').style.background = 'conic-gradient(#00d4ff 0% 0%, #1a2332 0% 100%)';
+                    document.getElementById('flowScore').textContent = softScore;
+                    document.getElementById('gaugeScore').textContent = softScore;
+                    document.getElementById('gaugeContainer').style.background = `conic-gradient(#00d4ff 0% ${softScore}%, #1a2332 ${softScore}% 100%)`;
                     const stateEl = document.getElementById('gaugeState');
                     stateEl.textContent = 'NOT_CODE';
                     stateEl.className = 'state not-code';
-                    document.getElementById('suggestion').textContent = '⚠️ Not detected as code. Write real programming syntax!';
+                    document.getElementById('suggestion').textContent = '⚠️ Low code quality detected. Write real programming syntax!';
                     document.getElementById('compSpeed').style.width = '0%';
                     document.getElementById('compSpeedText').textContent = '0%';
                     document.getElementById('compAccuracy').style.width = '0%';
                     document.getElementById('compAccuracyText').textContent = '0%';
                     document.getElementById('compFocus').style.width = '0%';
                     document.getElementById('compFocusText').textContent = '0%';
-                    document.getElementById('compClarity').style.width = '0%';
-                    document.getElementById('compClarityText').textContent = '0%';
+                    document.getElementById('compClarity').style.width = effectiveCodeQuality + '%';
+                    document.getElementById('compClarityText').textContent = effectiveCodeQuality + '%';
                     document.getElementById('compConsistency').style.width = '0%';
                     document.getElementById('compConsistencyText').textContent = '0%';
 
@@ -833,10 +833,10 @@
                                     session_id: 'playground_session',
                                     user_id: 'playground_user',
                                     flow_score: {
-                                        score: 0,
+                                        score: softScore,
                                         state: 'NOT_CODE',
-                                        suggestion: '⚠️ Not detected as code. Write real programming syntax!',
-                                        components: { speed: 0, accuracy: 0, focus: 0, clarity: 0, consistency: 0, code_quality: 0 }
+                                        suggestion: '⚠️ Low code quality detected. Write real programming syntax!',
+                                        components: { speed: 0, accuracy: 0, focus: 0, clarity: effectiveCodeQuality, consistency: 0, code_quality: effectiveCodeQuality }
                                     },
                                     keystroke_stats: {
                                         total_events: pgTotalPresses,
@@ -861,14 +861,19 @@
                 const clarityComp = Math.round(effectiveCodeQuality);
                 const consistencyComp = 80;
 
-                // NEW FORMULA: Include code_quality as a major component
-                const liveScore = Math.round(
+                const rawScore = (
                     speedComp * 0.15 +
                     accuracyComp * 0.15 +
                     focusComp * 0.20 +
-                    effectiveCodeQuality * 0.30 +      // ← Code quality has highest weight
+                    effectiveCodeQuality * 0.30 +
                     consistencyComp * 0.20
                 );
+                
+                // Smooth: only jump ±25 points per keystroke
+                const diff = rawScore - window._lastDisplayedScore;
+                const smoothed = window._lastDisplayedScore + Math.max(-25, Math.min(25, diff));
+                const liveScore = Math.round(Math.max(0, Math.min(100, smoothed)));
+                window._lastDisplayedScore = liveScore;
                 
                 // HARD CAP based on code quality
                 let finalScore = liveScore;
@@ -926,7 +931,7 @@
                                         focus: focusComp,
                                         clarity: clarityComp,
                                         consistency: consistencyComp,
-                                        code_quality: Math.round(finalCodeQuality)
+                                        code_quality: Math.round(effectiveCodeQuality)
                                     }
                                 },
                                 keystroke_stats: {
@@ -954,6 +959,7 @@
             pgBackspaces = 0;
             pgTotalPresses = 0;
             pgStartTime = null;
+            window._lastDisplayedScore = 0;
             if (pgEl) pgEl.value = '';
             document.getElementById('playgroundStats').textContent = 'Keys: 0 | Live WPM: 0 | Flow State: IDLE';
             document.getElementById('flowScore').textContent = '0';

@@ -169,45 +169,80 @@ IDE_MAP = {
 }
 
 
-def _get_windows_active_title():
-    """Windows ctypes fallback to get the active window title without dependencies."""
-    if platform.system() == 'Windows':
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if hwnd:
-                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-                    return buff.value
-        except Exception:
-            pass
-    return None
-
-
 def get_active_window_title():
-    """Returns active window title, or empty string if not found."""
+    """Returns active window title - uses multiple fallback methods"""
+    # Method 1: pygetwindow
     try:
         if gw is not None:
             try:
                 active = gw.getActiveWindow()
-                if active is not None and active.title:
-                    return active.title.strip()
-            except Exception:
+                if active is not None:
+                    title = active.title
+                    if title and title.strip():
+                        return title.strip()
+            except Exception as e:
                 pass
-        win_title = _get_windows_active_title()
-        if win_title:
-            return win_title.strip()
     except Exception:
         pass
+    
+    # Method 2: Windows ctypes (more reliable)
+    if platform.system() == 'Windows':
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if hwnd:
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if title and title.strip():
+                        return title.strip()
+                
+                # Fallback: get window class name
+                class_buff = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, class_buff, 256)
+                class_name = class_buff.value
+                if class_name:
+                    return f"[class:{class_name}]"
+        except Exception as e:
+            pass
+    
+    # Method 3: Check for common process names
+    if platform.system() == 'Windows':
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            
+            # Try to get process name
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+            if handle:
+                try:
+                    buff = ctypes.create_unicode_buffer(260)
+                    size = ctypes.c_ulong(260)
+                    if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buff, ctypes.byref(size)):
+                        full_path = buff.value
+                        process_name = full_path.split('\\')[-1].lower()
+                        return f"[process:{process_name}]"
+                finally:
+                    ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+    
     return ""
 
 
 def is_coding_app_active():
-    """Returns True only if a coding app window is currently focused"""
+    """Returns True if a coding app is active - checks title AND process name"""
     try:
-        title = None
+        title = ""
+        process_name = ""
+        
+        # Get window title
         if gw is not None:
             try:
                 active = gw.getActiveWindow()
@@ -215,78 +250,137 @@ def is_coding_app_active():
                     title = active.title.lower()
             except Exception:
                 pass
-
-        # Windows fallback using ctypes
-        if not title and platform.system() == 'Windows':
-            win_title = _get_windows_active_title()
-            if win_title:
-                title = win_title.lower()
-
-        if not title:
-            return True  # fallback: allow typing if can't detect
-
-        # DEBUG: uncomment to see what's being detected
-        # print(f"[DEBUG] Active window: {title}")
-
-        # Ignore list (highest priority non-coding windows)
-        IGNORE = ['whatsapp', 'telegram', 'spotify', 'discord', 'netflix', 'youtube', 'vlc']
-        if any(ign in title for ign in IGNORE):
-            return False
-
-        # Notepad special case - allow if user has typed code keywords recently
-        if 'notepad' in title and 'notepad++' not in title:
-            # Check last 50 keystrokes for code keywords
-            recent_keys = ''
-            if 'self' in locals() and hasattr(locals()['self'], 'keystrokes'):
-                recent_keys = ''.join([k.get('key', '') for k in getattr(locals()['self'], 'keystrokes', [])[-50:]])
-            code_keywords = ['def ', 'class ', 'return', 'print(', 'import ', 'function', 'const ', 
-                            'let ', 'var ', 'int ', 'void ', 'public ', 'private ', '#include', 'printf(']
-            if any(kw in recent_keys for kw in code_keywords):
-                return True
-            # Otherwise still allow (user might be starting)
-            return True
-
-        # VS Code specific detection (most common)
-        vscode_patterns = [
-            'visual studio code', 'vs code', 'code - oss',
-            '- visual studio code', '.py - ', '.js - ',
-            '.ts - ', '.cpp - ', '.java - ', '.html - ',
-            '.css - ', '.json - ', '.md - ',
-            'welcome - visual studio code',
-            'untitled - visual studio code'
+        
+        # Get via ctypes
+        if platform.system() == 'Windows':
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetForegroundWindow()
+                
+                # Get title
+                if not title:
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buff = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buff, length + 1)
+                        title = buff.value.lower()
+                
+                # Get process name
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+                if handle:
+                    try:
+                        buff = ctypes.create_unicode_buffer(260)
+                        size = ctypes.c_ulong(260)
+                        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buff, ctypes.byref(size)):
+                            process_name = buff.value.split('\\')[-1].lower()
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            except Exception:
+                pass
+        
+        # Combine title and process name for detection
+        combined = f"{title} {process_name}"
+        
+        if not combined.strip():
+            return False  # nothing detected → don't log
+        
+        # Process name mapping (more reliable than title)
+        PROCESS_TO_APP = {
+            'code.exe': 'vs code',
+            'code - insiders.exe': 'vs code',
+            'cursor.exe': 'cursor',
+            'windsurf.exe': 'windsurf',
+            'pycharm64.exe': 'pycharm',
+            'pycharm.exe': 'pycharm',
+            'idea64.exe': 'intellij',
+            'idea.exe': 'intellij',
+            'clion64.exe': 'clion',
+            'webstorm64.exe': 'webstorm',
+            'notepad.exe': 'notepad',
+            'notepad++.exe': 'notepad++',
+            'sublime_text.exe': 'sublime',
+            'atom.exe': 'atom',
+            'eclipse.exe': 'eclipse',
+            'devenv.exe': 'visual studio',
+            'gvim.exe': 'vim',
+            'nvim-qt.exe': 'neovim',
+            'emacs.exe': 'emacs',
+            'qtcreator.exe': 'qt creator',
+            'androidstudio64.exe': 'android studio',
+            'studio64.exe': 'android studio',
+            'chrome.exe': 'chrome',
+            'msedge.exe': 'edge',
+            'firefox.exe': 'firefox',
+            'brave.exe': 'brave',
+            'opera.exe': 'opera',
+            'whatsapp.exe': 'whatsapp',
+            'telegram.exe': 'telegram',
+            'discord.exe': 'discord',
+            'spotify.exe': 'spotify',
+            'vlc.exe': 'vlc',
+            'explorer.exe': 'explorer',
+        }
+        
+        # Check process name first
+        for proc, app_name in PROCESS_TO_APP.items():
+            if process_name == proc:
+                # Found process
+                if app_name in ('whatsapp', 'telegram', 'discord', 'spotify', 'vlc', 'explorer'):
+                    return False  # explicitly excluded
+                if app_name in ('chrome', 'edge', 'firefox', 'brave', 'opera'):
+                    # Browser - only allow if coding site in title
+                    coding_sites = ['leetcode', 'codeforces', 'hackerrank', 'codechef', 
+                                   'github', 'geeksforgeeks', 'hackerearth', 'topcoder',
+                                   'atcoder', 'cses', 'spoj', 'usaco', 'kattis', 'vjudge',
+                                   'codepen', 'replit', 'colab', 'jupyter', 'gitpod',
+                                   'stackblitz', 'codesandbox', 'kaggle']
+                    return any(site in title for site in coding_sites)
+                return True  # it's a coding app
+        
+        # Fallback: check title
+        coding_keywords = [
+            'visual studio code', 'vs code', 'code - oss', 'vscodium',
+            'cursor', 'windsurf', 'zed',
+            'pycharm', 'intellij', 'webstorm', 'phpstorm', 'rubymine',
+            'clion', 'rider', 'datagrip', 'fleet',
+            'sublime text', 'atom', 'eclipse', 'netbeans', 'bluej',
+            'notepad++', 'notepad', 'textmate', 'gedit', 'kate',
+            'vim', 'neovim', 'emacs', 'nano',
+            'android studio', 'xcode', 'qt creator', 'code::blocks', 'dev-c++',
+            'jupyter', 'jupyterlab', 'rstudio', 'spyder', 'thonny', 'idle',
+            'codeforces', 'hackerrank', 'codechef', 'leetcode', 'geeksforgeeks',
+            'hackerearth', 'topcoder', 'atcoder', 'codewars',
+            'codepen', 'jsfiddle', 'codesandbox', 'stackblitz', 'replit',
+            'colab', 'kaggle', 'gitpod',
+            'powershell', 'cmd', 'bash', 'git bash', 'windows terminal',
+            'moodle', 'canvas', 'blackboard', 'coursera', 'udemy', 'edx'
         ]
-        if any(p in title for p in vscode_patterns):
-            return True
-
-        # All coding apps
-        if any(app in title for app in CODING_APPS):
-            return True
-
-        # File extensions in title
-        if any(ext in title for ext in CODE_EXTENSIONS):
-            return True
-
-        # Browsers NOT on coding sites
-        BROWSERS = ['chrome', 'edge', 'firefox', 'brave', 'opera']
-        if any(b in title for b in BROWSERS):
-            CODING_SITES = [
-                'leetcode', 'codeforces', 'hackerrank', 'codechef', 'github',
-                'geeksforgeeks', 'hackerearth', 'topcoder', 'atcoder', 'cses',
-                'spoj', 'usaco', 'kattis', 'vjudge', 'codepen', 'replit',
-                'colab', 'jupyter', 'gitpod', 'stackblitz', 'codesandbox', 'kaggle'
-            ]
-            return any(s in title for s in CODING_SITES)
-
-        # Additional check: VS Code / editor title patterns
-        # VS Code shows titles like: "filename.ext - foldername - Visual Studio Code"
+        
+        for keyword in coding_keywords:
+            if keyword in title:
+                return True
+        
+        # File extension check
         import re
-        code_file_pattern = re.compile(r'\.(py|java|c|cpp|cc|cxx|h|hpp|js|jsx|ts|tsx|go|rs|rb|php|cs|kt|swift|html|css|sql|sh|json|xml|yaml|yml|md)\b')
-        if code_file_pattern.search(title):
+        code_ext = re.compile(r'\.(py|java|c|cpp|cc|cxx|h|hpp|js|jsx|ts|tsx|go|rs|rb|php|cs|kt|swift|html|css|sql|sh|json|xml|yaml|yml|md)\b')
+        if code_ext.search(title):
             return True
-
-        return True  # default allow for unrecognized windows
-    except Exception:
-        return True
+        
+        # Explicitly excluded apps
+        excluded = ['whatsapp', 'telegram', 'spotify', 'discord', 'netflix', 'youtube', 'vlc']
+        for ex in excluded:
+            if ex in title:
+                return False
+        
+        return False  # default to NOT coding (safer)
+        
+    except Exception as e:
+        return False
 
 
 def get_active_language(title=None):
@@ -582,9 +676,21 @@ class KeystrokeLogger:
         )
         self.listener.start()
 
+        if not hasattr(self, '_last_debug_time'):
+            self._last_debug_time = 0
+
         try:
             while self.is_logging and self.listener.is_alive():
                 time.sleep(0.1)
+                if time.time() - self._last_debug_time > 20:
+                    try:
+                        title = get_active_window_title()
+                        is_coding = is_coding_app_active()
+                        status = "✅ CODING" if is_coding else "❌ IGNORED"
+                        print(f"🔍 Window: '{title[:60]}' | {status}")
+                    except Exception:
+                        pass
+                    self._last_debug_time = time.time()
         except KeyboardInterrupt:
             print("\nInterrupted by user.")
             self.stop_logging()

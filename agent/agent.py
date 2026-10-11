@@ -103,29 +103,12 @@ except ImportError:
 
 
 def _get_active_window_title():
-    """Helper to detect the active window title via pygetwindow or Windows ctypes."""
-    if gw is not None:
-        try:
-            active = gw.getActiveWindow()
-            if active and active.title:
-                return active.title
-        except Exception:
-            pass
-
-    import platform
-    if platform.system() == 'Windows':
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if hwnd:
-                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-                    return buff.value
-        except Exception:
-            pass
-    return ""
+    """Helper to detect the active window title."""
+    try:
+        from agent.logger import get_active_window_title
+        return get_active_window_title()
+    except Exception:
+        return ""
 
 
 class CodePulseAgent:
@@ -459,14 +442,19 @@ class CodePulseAgent:
                     elif flow_result.get('ai_penalty_applied', False):
                         print("   ⚠️  AI penalty applied!")
 
-                    # Active window debug (every 5 sends)
+                    # Active window debug every 3 sends
                     if not hasattr(self, '_debug_counter'):
                         self._debug_counter = 0
                     self._debug_counter += 1
-                    if self._debug_counter % 5 == 0:
-                        from agent.logger import get_active_window_title, get_active_language
-                        current_title = get_active_window_title() or 'Unknown'
-                        print(f"   🔍 Active window: '{current_title[:60]}' | Lang: {get_active_language()}")
+                    if self._debug_counter % 3 == 0:
+                        try:
+                            from agent.logger import get_active_window_title, get_active_language, is_coding_app_active
+                            current_title = get_active_window_title() or 'Unknown'
+                            is_coding = is_coding_app_active()
+                            status = "✅ CODING" if is_coding else "❌ IGNORED"
+                            print(f"   🔍 Window: '{current_title[:50]}' | {status} | Lang: {get_active_language()}")
+                        except Exception as e:
+                            print(f"   🔍 Debug error: {e}")
 
                     print("   ─────────────────────────────")
                 else:
